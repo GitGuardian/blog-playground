@@ -1,0 +1,27 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+bandit = "*"
+black = {extras = ["jupyter"], version = "*"}
+django-extensions = "*"
+django-stubs = "*"
+flake8 = "*"
+ipdb = "*"
+ipython = "*"
+mypy = "*"
+isort = "*"
+
+[packages]
+django = "*"
+psycopg2-binary = "*"
+gunicorn = "*"
+jupyter = "*"
+faker = "*"
+more-itertools = "*"
+tqdm = "*"
+
+[requires]
+python_version = "3.10"

@@ -1,0 +1,46 @@
+default_stages: [commit]
+
+repos:
+  - repo: https://github.com/psf/black
+    rev: 22.10.0
+    hooks:
+      - id: black
+        args: [--config, pyproject.toml]
+
+  - repo: https://github.com/PyCQA/flake8
+    rev: 5.0.4
+    hooks:
+      - id: flake8
+        args: [--config, setup.cfg]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.1.0
+    hooks:
+      - id: check-json
+      - id: check-added-large-files
+      - id: check-yaml
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.10.1
+    hooks:
+      - id: isort
+        args: [--settings-path, pyproject.toml]
+
+  - repo: https://github.com/pre-commit/mirrors-prettier # to format JSON, YAML and markdown files among others
+    rev: v2.6.2
+    hooks:
+      - id: prettier
+
+  # Another free tip for your projects ;)
+
+  # - repo: https://github.com/gitguardian/gg-shield
+  #   rev: v1.13.3
+  #   hooks:
+  #     - id: ggshield
+
+  # - repo: https://github.com/gitguardian/gg-shield
+  #   rev: v1.13.5
+  #   hooks:
+  #     - id: ggshield-push
+  #       language_version: python3
+  #       stages: [push]
