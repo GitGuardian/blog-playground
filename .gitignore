@@ -2,4 +2,4 @@
 
 Pipfile.lock
 .ipynb_checkpoints/*
-playground/settings.py
+.env

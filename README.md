@@ -1,7 +1,16 @@
+# Django Performances Playground
+
+Welcome to this playground. You can test all tips of [10 tips to optimize PostgreSQL queries in your Django project](https://www.gitguardian.com) using this repo.
+
+
+## Quickstart
+
 ### Requirements
 
-- pipenv
-- docker
+To run this playground, you'll need
+
+- [Pipenv](https://github.com/pypa/pipenv)
+- [Docker](https://www.docker.com/products/docker-desktop/)
 
 ### Usage
 
@@ -12,32 +21,26 @@ pipenv install -d
 pipenv shell
 ```
 
-2. Start PG container
+3. Setup your environment
+
+Copy the example env file
+
+```
+cp .env.example .env
+```
+
+Edit `.env` by setting a password and a Django Secret Key.
+
+3. Start your PostgreSQL container
 
 ```
 docker compose up -d
 ```
 
-3. Apply migrations
-
-```
-./manage.py migrate
-```
-
-4. Generate data
-
-```
-./manage.py generate_data
-```
-
-5. Open Django shell
-
-```
-./manage.py shell_plus
-```
-
-6. Open a notebook
+4. Open a notebook
 
 ```
 ./manage.py shell_plus --notebook
 ```
+
+You are now ready to start ;)

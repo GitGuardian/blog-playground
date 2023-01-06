@@ -1,0 +1,19 @@
+version: "3"
+
+services:
+  postgres:
+    # TODO make it possible to specify a custom config file or modify the config with -c
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      PGDATA: /data/postgres
+      POSTGRES_DB: ${DATABASE_NAME}
+    volumes:
+       - pg-data:/data/postgres
+    ports:
+      - "127.0.0.1:${DATABASE_PORT}:5432"
+    shm_size: 10g
+
+volumes:
+  pg-data:

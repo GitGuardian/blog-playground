@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.1/ref/settings/
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -22,7 +23,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure- replace by your key"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure - replace by your key")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -35,11 +36,11 @@ ALLOWED_HOSTS = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql_psycopg2",
-        "NAME": "django_playground",
-        "USER": "postgres",
-        "PASSWORD": "postgres",
-        "HOST": "localhost",
-        "PORT": 5432,
+        "NAME": os.environ.get("DATABASE_NAME", "django_playground"),
+        "USER": os.environ.get("DATABASE_USER", "postgres"),
+        "PASSWORD": os.environ.get("DATABASE_PASSWORD"),
+        "HOST": os.environ.get("DATABASE_HOST", "localhost"),
+        "PORT": int(os.environ.get("DATABASE_PORT", "54321")),
         "CONN_MAX_AGE": None,
     }
 }
