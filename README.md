@@ -49,3 +49,39 @@ docker compose up -d
 ```
 
 You are now ready to start ;)
+
+## Our Sample App
+
+This notebook is based on the `books` Django Application that includes two Models:
+
+- Book
+- Person
+
+A Person can be either the `author` of a Book or one of its `readers`.
+All books written by a Person can be accessed through the `writings` related name of the `author` ForeignKey.
+The `readers` relation is defined as a ManyToManyField, accessible from Person using `writings` related name.
+
+```mermaid
+---
+title: The books application
+---
+classDiagram
+
+Book --> Person: author (books)
+Book o--> Person: readers (writings)
+
+class Book{
+title
+author
+readers
+}
+
+class Person{
+email
+name
+bio
+}
+
+```
+
+We also provide a `generate_data` Django command to populate the database with enough data to get meaningful results when playing with queries.
