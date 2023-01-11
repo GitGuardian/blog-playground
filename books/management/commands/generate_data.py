@@ -1,12 +1,11 @@
 import logging
+from typing import cast
 
 from django.core.management.base import BaseCommand
 
-from .generate_data_scripts import (
-    generate_persons,
-    generate_books,
-)
 from books.models import Person
+
+from .generate_data_scripts import generate_books, generate_persons
 
 
 logger = logging.getLogger(__name__)
@@ -40,11 +39,16 @@ class Command(BaseCommand):
         logger.info("starting data generation...")
 
         logger.info(f"adding {options['persons']} persons...")
-        persons = generate_persons(options["persons"], keep_results=True)
+        persons = cast(
+            list[Person], generate_persons(options["persons"], keep_results=True)
+        )
 
         tolstoy = Person.objects.first()
+        assert tolstoy is not None, "Person's table should not be empty"
+
         tolstoy.name = "tolstoy"
         tolstoy.save()
 
         logger.info(f"adding {options['books']} books...")
+
         generate_books(options["books"], options["readers"], persons)
