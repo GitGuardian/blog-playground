@@ -1,4 +1,4 @@
-# Django Performances Playground
+# Gitguardian Engineering Blog Playground
 
 Welcome to this playground. You can test all tips of [10 tips to optimize PostgreSQL queries in your Django project](https://www.gitguardian.com) using this repo.
 
@@ -18,10 +18,9 @@ To run this playground, you'll need
 
 ```
 pipenv install -d
-pipenv shell
 ```
 
-3. Setup your environment
+2. Setup your environment
 
 Copy the example env file
 
@@ -29,15 +28,21 @@ Copy the example env file
 cp .env.example .env
 ```
 
-Edit `.env` by setting a password and a Django Secret Key.
+Edit `.env` by setting a PostgreSQL password and a Django Secret Key.
 
-3. Start your PostgreSQL container
+3. Activate your environment
+
+```
+pipenv shell
+```
+
+4. Start your PostgreSQL container
 
 ```
 docker compose up -d
 ```
 
-4. Open a notebook
+5. Open a notebook
 
 ```
 ./manage.py shell_plus --notebook
