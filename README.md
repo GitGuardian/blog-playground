@@ -1,6 +1,6 @@
 # Gitguardian Engineering Blog Playground
 
-Welcome to this playground. You can test all tips of [10 tips to optimize PostgreSQL queries in your Django project](https://www.gitguardian.com) using this repo.
+Welcome to this playground. You can test all tips of [10 tips to optimize PostgreSQL queries in your Django project](https://blog.gitguardian.com/10-tips-to-optimize-postgresql-queries-in-your-django-project) using this repo.
 
 
 ## Quickstart
