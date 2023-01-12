@@ -1,19 +1,18 @@
-import logging
 from collections.abc import Iterable
 from datetime import datetime
 from itertools import islice
-from typing import TypeVar
+from typing import Generic, TypeVar
 
+from django.db import IntegrityError
 from django.db.models import Model
 from django.utils import timezone
 from tqdm import tqdm
 
 
 ModelType = TypeVar("ModelType", bound=Model)
-logger = logging.getLogger(__name__)
 
 
-class BulkCreator:
+class BulkCreator(Generic[ModelType]):
     """Helper class to create a bunch of objects in bulk and display progress."""
 
     start_time: datetime
@@ -25,6 +24,7 @@ class BulkCreator:
         batch_size: int = 2_000,
         keep_results: bool = True,
         unit: str | None = None,
+        ignore_conflicts: bool = False,
     ) -> None:
         self.model = model
         self._batch: list[ModelType] = []
@@ -34,6 +34,8 @@ class BulkCreator:
         self.keep_results = keep_results
         self.batch_size = batch_size
         self._unit = unit or self.model.__name__.lower()
+        self._ignore_conflicts = ignore_conflicts
+
         assert batch_size > 0
 
     def __enter__(self) -> "BulkCreator":
@@ -75,8 +77,16 @@ class BulkCreator:
     def flush(self) -> None:
 
         if len(self._batch) > 0:
-            created = self.model.objects.bulk_create(self._batch)
-            if self.keep_results:
-                self._created += created
-            self._total_created += len(created)
-            self._batch = []
+            try:
+                created = self.model.objects.bulk_create(self._batch)
+            except IntegrityError:
+                # we cannot just pass _ignore_conflicts to the bulk_create,
+                # because otherwise the PK is not set in the model instances
+                if not self._ignore_conflicts:
+                    raise
+            else:
+                if self.keep_results:
+                    self._created += created
+                self._total_created += len(created)
+            finally:
+                self._batch = []
