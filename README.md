@@ -2,7 +2,6 @@
 
 Welcome to this playground. You can test all tips of [10 tips to optimize PostgreSQL queries in your Django project](https://blog.gitguardian.com/10-tips-to-optimize-postgresql-queries-in-your-django-project) using this repo.
 
-
 ## Quickstart
 
 ### Requirements
@@ -15,6 +14,8 @@ To run this playground, you'll need
 ### Usage
 
 1. Install virtualenv
+
+You may need to install [graphviz](https://www.graphviz.org/download/) before
 
 ```
 pipenv install -d
@@ -52,36 +53,9 @@ You are now ready to start ;)
 
 ## Our Sample App
 
-This notebook is based on the `books` Django Application that includes two Models:
+![Alt text](djangocon_workshop/slides/model_graph.png)
 
-- Book
-- Person
+## DjangCon
 
-A Person can be either the `author` of a Book or one of its `readers`.
-All books written by a Person can be accessed through the `writings` related name of the `author` ForeignKey.
-The `readers` relation is defined as a ManyToManyField, accessible from Person using `writings` related name.
-
-```mermaid
----
-title: The books application
----
-classDiagram
-
-Book --> Person: author (books)
-Book o--> Person: readers (writings)
-
-class Book{
-title
-author
-readers
-}
-
-class Person{
-email
-name
-bio
-}
-
-```
-
-We also provide a `generate_data` Django command to populate the database with enough data to get meaningful results when playing with queries.
+The slides are randered from the markdown files in [djangocon_workshop/slides](djangocon_workshop/slides) using quarto
+You can look at the presentation by untaring `djangocon_workshop/quarto_files.tar.xz` and opening the HTML files in `djangocon_workshop/quarto_files/djangcon_workshop/slides` with any browser

@@ -1,0 +1,504 @@
+# Mastering the Django ORM with PostgreSQL
+
+# Goals
+
+This workshop aims at explaining a few methods to:
+
+- Resolve SQL-related performance issues
+- Detect them early
+
+```{python}
+# | echo: false
+
+import django_init
+
+from rich import print
+from rich.console import Console
+from rich.markdown import Markdown
+
+console = Console()
+
+from books.models import *
+from utils.perf_display import perf_counter
+from rest_framework.test import APIClient
+from collections import defaultdict
+
+```
+
+# What's in this repo?
+
+## Models
+
+![](model_graph.png)
+
+## Dataset
+
+::: aside
+The dataset was built using:
+
+- 1 call to `./manage.py generate_data`
+- 1 call to `./manage.py generate_data --libraries 10000`.
+
+:::
+
+```{python}
+
+# | echo: false
+for model in [Library, Person, Book, BookTag, Review]:
+    print(f" \n {model.objects.count():,} {model._meta.verbose_name_plural}")
+console.rule(style="white")
+```
+
+Let's define 3 libraries with different sizes.
+
+```{python}
+# | echo: false
+from django.db.models import Count
+
+# id not from the 10 libraries with a lot of books
+personal = Library.objects.get(id=100)
+personal.name = "Personal"
+personal.save()
+personal_id = personal.id
+print("Personal has", personal.books.count(), "books")
+
+public = Library.objects.order_by("-id").first()
+public.name = "Public"
+public.save()
+print("Public has", public.books.count(), "books")
+public_id = public.id
+
+# Get the library with the most books
+alexandria_id, book_count = (
+    Book.objects.values("library_id")
+    .annotate(book_count=Count("id"))
+    .order_by("-book_count")
+    .values_list("library_id", "book_count")
+    .first()
+)
+# print("Library ID", alexandria_id, "book count", book_count)
+
+alexandria = Library.objects.get(id=alexandria_id)
+alexandria.name = "Alexandria"
+alexandria.save()
+print("Alexandria has", alexandria.books.count(), "books")
+
+```
+
+## `books` App structure
+
+```text
+books/
+    views/
+        book/
+            list_books.py
+            reader_per_book.py
+        review/
+            simple.py
+            ordered.py
+            filtered.py
+            complete.py
+
+    models/
+        book.py
+        library.py
+        review.py
+        book_tag.py
+        person.py
+
+    selectors/
+        book/
+            list_books.py
+            reader_per_book.py
+        review.py
+```
+
+# 1st exercice
+
+[first_orm_tips](1_first_orm_tips.ipynb) shows basic ORM errors, and explains how to fix [the reader_per_book view](../../books/views/book/reader_per_book.py)
+
+This presentation will focus on the Django ORM, and almost all its content is DB agnostic
+
+---
+
+```python
+# in books.selectors.book.reader_per_book
+def list_readers_per_book(library_id) -> dict[str, list[str]]:
+    """
+    Return a dict {book_title: [reader.name]} for a given library
+    """
+    books = Book.objects.filter(library_id=library_id)
+    return {
+        book.title: [reader.name for reader in book.readers.all()]
+        for book in books
+    }
+
+# in books.views.book.reader_per_book
+class ListReaderPerBookView(APIView):
+    def get(self, request, library_id: int) -> Response:
+        return Response(list_readers_per_book(library_id), 200)
+```
+
+<br>
+
+```json
+{
+  "Power east modern may tonight reach important west.": [
+    "Danny Roberts",
+    "Ashley Smith",
+    "Scott Chavez",
+    "David West",
+    "Amanda Nelson",
+    "Andrea Soto",
+    "Courtney Thomas",
+    "Jennifer Sullivan"
+  ]
+}
+```
+
+## Inspect executed queries
+
+```{python}
+from django.db import connection, reset_queries
+
+reset_queries()
+
+Book.objects.count()
+Person.objects.first()
+print(connection.queries)
+
+reset_queries()
+
+list(Review.objects.all()[:10])
+print(connection.queries)
+```
+
+## The N+1 query problem
+
+```{python}
+
+with perf_counter(message="Total execution time", time_sql=True):
+    result = APIClient().get(f"/books/{personal.id}/readers-per-book")
+```
+
+```{python}
+# | echo: false
+print(" \n ")
+print(dict(list(result.json().items())[0:2]))
+print(
+    "Number of queries:",
+    len(connection.queries),
+    ".\n ",
+)
+print(Book.objects.filter(library_id=personal.id).count(), "books")
+print("That's the N+1 query problem right here!")
+reset_queries()
+```
+
+# Django Queryset methods
+
+## `select_related`
+
+In case of a Many-to-one relationship, `select_related` let us select from multiple tables in 1 query
+
+```{python}
+#| code-line-numbers: "|3"
+def get_related_objects(reviews):
+    return [
+    {"reader": review.reader, "book": review.book, "rating": review.rating}
+    for review in reviews
+]
+
+reviews = Review.objects.all()[:100]
+result = get_related_objects(reviews)
+```
+
+```{python}
+# | echo: false
+print("Number of queries:", len(connection.queries))
+reset_queries()
+```
+
+```{python}
+#| code-line-numbers: "1"
+reviews = reviews.select_related("book", "reader") # For Many-to-one relations
+result = get_related_objects(reviews)
+```
+
+```{python}
+# | echo: false
+print("Number of queries:", len(connection.queries))
+reset_queries()
+```
+
+## `prefetch_related`
+
+In case of a One-to-many relationship, `prefetch_realted` executes a second query to retrieve related objects
+
+```{python}
+#| code-line-numbers: "|2"
+def get_reader_per_book(books):
+    return { book.title: [reader.name for reader in book.readers.all()] for book in books # one-to-many relationship
+    }
+
+books = Book.objects.filter(library_id=public_id)
+
+with perf_counter(message="Without prefetch_related", time_sql=True):
+    result = get_reader_per_book(books)
+
+```
+
+```{python}
+#| code-line-numbers: "|2"
+
+with perf_counter(message="With prefetch_related", time_sql=True):
+    books = books.prefetch_related("readers")
+    result = get_reader_per_book(books)
+```
+
+---
+
+## Reducing Django exec time
+
+We can limit the number of Django-related instantiated objects with:
+
+- `only`
+- `values` / `values_list`
+
+```{python}
+def retrieve_person_ids(qs, query):
+    with perf_counter(message=query, time_sql=True, print_sql=True):
+        person_ids = [person.id for person in qs]
+
+retrieve_person_ids(Person.objects.all(), "all()")
+retrieve_person_ids(Person.objects.only("id"), 'only("id")')
+retrieve_person_ids(
+    Person.objects.values_list("id", named=True), 'values_list("id", named=True)'
+)
+```
+
+---
+
+Let's try all our optimizations, using one last trick: `Prefetch` with `to_attr` attribute
+
+```{python}
+#| echo: false
+from django.db.models import Prefetch
+
+# The first implementation using prefetch_related
+with perf_counter(message="Previous implementation", time_sql=True):
+    books = Book.objects.filter(library_id=public_id).prefetch_related("readers")
+    result = {
+        book.title: [reader.name for reader in book.readers.all()] for book in books
+    }
+```
+
+<br>
+
+```python
+def list_readers_per_book(library_id):
+    books = (
+        Book.objects.filter(library_id=library_id)
+        .only("title")
+        .prefetch_related(prefetch)
+    )
+    return {
+        book.title: [reader.name for reader in book.prefetch_readers] for book in books
+    }
+```
+
+```{python}
+#| echo: false
+
+# The new, improved one
+prefetch = Prefetch(
+    "readers", queryset=Person.objects.only("name"), to_attr="prefetch_readers"
+)
+with perf_counter(message="Less Django objects", time_sql=True):
+    books = (
+        Book.objects.filter(library_id=public_id)
+        .only("title")
+        .prefetch_related(prefetch)
+    )
+    result = {
+        book.title: [reader.name for reader in book.prefetch_readers] for book in books
+    }
+```
+
+<br>
+
+That's where reading the whole Django doc can get us
+
+<br>
+
+And that's usually where articles about Django perf improvement stop
+
+<br>
+
+Even if execution time is fast, the total time (including Django processing and networking) is very long.
+
+#
+
+### From 2 to 1 query
+
+With `prefetch_related`, we've reduced the number of queries to 2. Is it possible to do a single query?
+
+Let's try a naive approach, and just return flat review tuples, before processing them in python
+
+```{python}
+readers_per_book = defaultdict(list)
+with perf_counter(time_sql=True, print_sql=True):
+
+    reviews = Review.objects.filter(library=public_id).values_list(
+        "book__title", "reader__name"
+    ) # return 2-tuples
+
+    for book_title, reader_name in reviews:
+        readers_per_book[book_title].append(reader_name)
+```
+
+<br>
+
+That's nice, but can we let the SQL do all the work?
+
+#
+
+### Introducing ArrayAgg
+
+```{python}
+#| code-line-numbers: "|6"
+from django.contrib.postgres.aggregates import ArrayAgg
+
+def list_readers_per_book(library_id):
+    return dict(
+        Book.objects.filter(library=library_id)
+        .annotate(reader_names=ArrayAgg("readers__name"))
+        .values_list("title", "reader_names")
+    )
+
+with perf_counter(time_sql=True, print_sql=True):
+    readers_per_book = list_readers_per_book(public_id)
+```
+
+#
+
+### Summary
+
+```{python}
+#| echo: false
+
+from rich.table import Table
+import time
+from utils.perf_display import format_duration
+
+table = Table(show_lines=True)
+table.add_column("name", style="bold green")
+table.add_column("query")
+table.add_column("duration")
+
+
+def add_row(name, query_str, get_query):
+    start = time.perf_counter()
+    res = get_query()
+    duration = time.perf_counter() - start
+    table.add_row(name, query_str, format_duration(duration))
+
+
+add_row(
+    "basic",
+    r"""{
+    book.title: \[reader.name for reader in book.readers.all()]
+    for book in Book.objects.filter(library_id=public_id)
+}
+""",
+    lambda: {
+        book.title: [reader.name for reader in book.readers.all()]
+        for book in Book.objects.filter(library_id=public_id)
+    },
+)
+add_row(
+    "prefetched",
+    r"""{
+    book.title: \[reader.name for reader in book.readers.all()]
+    for book in Book.objects.filter(
+        library_id=public_id).prefetch_related("readers")
+}
+""",
+    lambda: {
+        book.title: [reader.name for reader in book.readers.all()]
+        for book in Book.objects.filter(library_id=public_id).prefetch_related(
+            "readers"
+        )
+    },
+)
+
+
+add_row(
+    "prefetched and simplified",
+    r"""{
+    book.title: \[reader.name for reader in book.prefetch_readers]
+    for book in Book.objects.filter(library_id=public_id)
+    .only("title")
+    .prefetch_related(prefetch)
+}
+""",
+    lambda: {
+        book.title: [reader.name for reader in book.prefetch_readers]
+        for book in Book.objects.filter(library_id=public_id)
+        .only("title")
+        .prefetch_related(prefetch)
+    },
+)
+
+
+def iterate_over_tuples():
+    readers_per_book = defaultdict(list)
+
+    for book_title, reader_name in Review.objects.filter(library=public_id).values_list(
+        "book__title", "reader__name"
+    ):
+        readers_per_book[book_title].append(reader_name)
+    return readers_per_book
+
+
+add_row(
+    "iterating over tuples",
+    r"""reviews = Review.objects.filter(library=public_id).values_list(
+    "book__title", "reader__name"
+)
+for book_title, reader_name in reviews:
+    readers_per_book[book_title].append(reader_name)
+""",
+    iterate_over_tuples,
+)
+
+add_row(
+    "ArrayAgg",
+    r"""dict(
+    Book.objects.filter(library=public_id)
+    .annotate(reader_names=ArrayAgg("readers__name"))
+    .values_list("title", "reader_names")
+)
+""",
+    lambda: dict(
+        Book.objects.filter(library=public_id)
+        .annotate(reader_names=ArrayAgg("readers__name"))
+        .values_list("title", "reader_names")
+    ),
+)
+console.print(table)
+```
+
+#
+
+### What about Alexandria?
+
+```{python}
+with perf_counter(time_sql=True):
+    readers_per_book = list_readers_per_book(alexandria_id)
+```
+
+<br>
+
+Still not that good.
+We'll find other improvements later, once we dive deeper into SQL optimizations, ([on the next presentation](about_indexing.html))
