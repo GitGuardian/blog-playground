@@ -3,3 +3,12 @@
 Pipfile.lock
 **/.ipynb_checkpoints/*
 .env
+.pytest_cache
+dumpdir/
+dumpdir.tar.gz
+
+workshop.md
+/.quarto/
+.jupyter_cache
+_freeze
+django-perfs-playground_files

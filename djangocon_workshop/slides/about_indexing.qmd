@@ -1,0 +1,601 @@
+# About Indexing
+
+```{python}
+# | echo: false
+
+import django_init
+
+from rich import print
+from rich.console import Console
+from rich.table import Table
+from rich.markdown import Markdown
+
+from django.db import connection
+
+from books.models import *
+from utils.perf_display import perf_counter, format_duration
+from rest_framework.test import APIClient
+from collections import defaultdict
+
+from rest_framework.test import APIClient
+
+from utils.sql import use_indexes, disable_indexes
+console = Console()
+client = APIClient()
+```
+
+```{python}
+# | echo: false
+from django.db.models import Count
+
+# id not from the 10 libraries with a lot of books
+personal = Library.objects.get(id=100)
+personal_id = personal.id
+
+public = Library.objects.order_by("-id").first()
+public_id = public.id
+
+# Get the library with the most books
+alexandria_id = 7
+
+alexandria = Library.objects.get(id=alexandria_id)
+previous_alexandria_id = 6
+```
+
+```{python}
+# | echo: false
+from utils.sql import toggle_all_custom_indexes
+
+toggle_all_custom_indexes(False)
+```
+
+## 2nd exercice
+
+Let's continue with another usual example.
+
+We want to implement a standard endpoint returning a page of filtered and ordered reviews.
+
+A minimal implementation is available in `books/views/review/ordered.py`
+
+```{.python code-line-numbers="|3,8,15|5,17"}
+class ListReviewsView(GenericAPIView):
+    filter_backends = (OrderingFilter,)
+    ordering_fields = ["written_at", "id", "rating"]
+    ordering = ["written_at"]
+    pagination_class = NoCountHeaderPagination
+
+    def get_queryset(self, library_id) -> QuerySet:
+        return Review.objects.filter(library_id=library_id)
+
+    def get(self, request, library_id: int) -> Response:
+        """
+        Similar to rest_framework.mixins.ListModelMixin
+        with simplified serialization
+        """
+        queryset = self.filter_queryset(self.get_queryset(library_id))
+        queryset = queryset.values()  # simplified serialization
+        page = self.paginate_queryset(queryset)
+        return self.get_paginated_response(page)
+```
+
+## Ordering by `id` and `-written_at`
+
+```{python}
+def get_ordered_page(ordering):
+    with perf_counter(message=f"ordering by {ordering}", time_sql=True, print_sql=True):
+        return client.get(f"/reviews/{alexandria_id}/ordered?ordering={ordering}")
+```
+
+<br>
+
+```{python}
+page = get_ordered_page("id")
+```
+
+<br>
+
+```{python}
+page = get_ordered_page("-written_at")
+```
+
+## Complete Benchmark
+
+```{python}
+# | echo: false
+from books.tests.benchmarks import benchmark_list_reviews
+```
+
+:::: {.columns}
+::: {.column width="50%"}
+
+```{python}
+#| echo: false
+# benchmark the ordering endpoint
+benchmark_list_reviews(
+    ["simple-list-reviews", "ordered-list-reviews"],
+    library_ids=[public_id],
+)
+
+```
+
+:::
+
+::: {.column width="50%"}
+
+```{python}
+#| echo: false
+# benchmark the ordering endpoint
+benchmark_list_reviews(
+    ["simple-list-reviews", "ordered-list-reviews"],
+    library_ids=[alexandria_id],
+)
+
+```
+
+:::
+
+::::
+
+::: {.incremental}
+A few remarks about these results:
+
+- All these orderings are quite fast for `Public`, and all about the same duration, except for `id`
+- `Alexandria` is usually slower than `Public`, except for `id`, which is significantly faster
+- All `Alexandria` orderings are slow, except `id`
+
+:::
+
+---
+
+### `EXPLAIN ANALYZE`
+
+We saw previously we cannot explain these differences just by looking at the SQL query.
+
+We'll now use a new tool: the **`EXPLAIN ANALYZE` SQL statement**.
+
+<br>
+
+```{python}
+#| code-line-numbers: "|8"
+def get_reviews(library_id, ordering, page_size=20):
+    return Review.objects.filter(library_id=library_id).order_by(ordering)[:page_size]
+
+def explain_qs(library_id, ordering, print_sql=False):
+    review_qs = get_reviews(library_id, ordering)
+
+    with perf_counter(message=f"ordering by {ordering}", time_sql=True, print_sql=print_sql):
+        result = review_qs.explain(analyze=True)
+
+    print(" \n ", result)
+```
+
+<br>
+
+This will display the exact internal operations used by the PostgreSQL engine.
+
+In particular, we'll be able to inspect which indexes are used by each query.
+
+---
+
+##
+
+```python
+explain_qs(alexandria_id, "-written_at", print_sql=True)
+```
+
+<br>
+
+```{.python code-line-numbers="|16|21|12-13|12-15|6,9"}
+Limit  (cost=1447499.48..1447501.81 rows=20 width=211) (actual time=9512.533..9524.073 rows=20 loops=1)
+  ->  Gather Merge  (cost=1447499.48..1630832.48 rows=1571316 width=211) (actual time=9373.984..9385.520 rows=20
+loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        ->  Sort  (cost=1446499.45..1448463.60 rows=785658 width=211) (actual time=9354.371..9354.376 rows=16
+loops=3)
+              Sort Key: written_at DESC
+              Sort Method: top-N heapsort  Memory: 36kB
+              Worker 0:  Sort Method: top-N heapsort  Memory: 38kB
+              Worker 1:  Sort Method: top-N heapsort  Memory: 37kB
+              ->  Parallel Seq Scan on books_review  (cost=0.00..1425593.38 rows=785658 width=211) (actual
+time=74.842..9070.489 rows=668891 loops=3)
+                    Filter: (library_id = 7)
+                    Rows Removed by Filter: 12672873
+Planning Time: 0.119 ms
+JIT:
+  Functions: 13
+  Options: Inlining true, Optimization true, Expressions true, Deforming true
+  Timing: Generation 2.553 ms, Inlining 239.797 ms, Optimization 76.160 ms, Emission 46.268 ms, Total 364.778 ms
+Execution Time: 9561.506 ms
+```
+
+:::: {.fragment fragment-index=1}
+
+Lot of information here. What can we notice?
+
+::: {.fragment fragment-index=2}
+
+- Planning time is less than a millisecond
+
+- Execution time is around 10 seconds
+
+- The main operation is a `Parallel Seq Scan on books_review`, i.e. the whole `books_review` table is read, and only the rows matching `(library_id = 7)` are kept. `12666173` rows are filtered out
+
+- Finally, a heapsort is used to get the first 20 rows
+
+:::
+
+::::
+
+## Adding Indexes
+
+```sql
+CREATE INDEX review_written_at_idx ON books_review USING btree (written_at);
+CREATE INDEX review_rating_idx ON books_review USING btree (rating);
+```
+
+```{python}
+with use_indexes("review_written_at_idx"):
+    explain_qs(alexandria_id, "-written_at")
+```
+
+```{python}
+with use_indexes("review_written_at_idx"):
+    with perf_counter(time_sql=True):
+        reviews = list(get_reviews(alexandria_id, "-written_at"))
+```
+
+---
+
+```{python}
+with use_indexes("review_rating_idx"):
+    with perf_counter(time_sql=True):
+        reviews = list(get_reviews(alexandria_id, "rating"))
+```
+
+```{python}
+with use_indexes("review_rating_idx"):
+    with perf_counter(time_sql=True):
+        reviews = list(get_reviews(alexandria_id, "-rating"))
+```
+
+<br>
+
+Ordering by `rating DESC` is still quite slow.
+
+Let's try to understand why
+
+::: {.fragment}
+
+```{.python code-line-numbers="|2|4,5"}
+Limit  (cost=0.44..991.32 rows=20 width=211) (actual time=2422.868..2423.150 rows=20 loops=1)
+  ->  Index Scan Backward using review_rating_idx on books_review  (cost=0.44..93419167.88 rows=1885578 width=211)
+(actual time=2422.866..2423.145 rows=20 loops=1)
+        Filter: (library_id = 7)
+        Rows Removed by Filter: 1819598
+Planning Time: 0.404 ms
+Execution Time: 2423.218 ms
+```
+
+:::
+
+::: {.fragment}
+
+We still have to filter out a large ammount of rows..
+
+:::
+
+## Multicolumn indexes
+
+```sql
+CREATE INDEX review_library_id_rating_idx ON public.books_review USING btree (library_id, rating)
+```
+
+```{python}
+with use_indexes("review_library_id_rating_idx"):
+    explain_qs(alexandria_id, "-rating")
+```
+
+<br>
+
+Much better!
+
+## Back to `id` sorts
+
+Let's create the same kind of index:
+
+```sql
+CREATE INDEX review_library_id_pk_idx ON public.books_review USING btree (library_id, id)
+```
+
+```{python}
+with use_indexes("review_library_id_pk_idx"):
+    explain_qs(public_id, "-id")
+```
+
+<br>
+```{python}
+with use_indexes("review_library_id_pk_idx"):
+    explain_qs(alexandria_id, "-id")
+```
+
+## Plan can evolve
+
+The plan for our previous_alexandria id (`6`) is
+
+```{python}
+explain_qs(previous_alexandria_id, "-id")
+```
+
+<br>
+
+However, the plan, even with the `review_library_id_pk_idx` index enabled, used to be
+
+![](../images/previous_plan_by_id.png)
+
+<br>
+
+Nothing has changed betweeen those two executions, except for the internal PG index stats.
+
+::: {.fragment}
+
+As we can see, the actual plan depends on our data, and can be quit unpredictable
+
+:::
+
+## A bad idea: disabling the PK index
+
+The planner keeps using `books_review_pkey`, even though it does not seem like the right choice.
+
+What would happen without this particular index?
+
+```{python}
+with use_indexes("review_library_id_pk_idx"), disable_indexes("books_review_pkey"):
+    explain_qs(previous_alexandria_id, "-id")
+```
+
+<br>
+
+::: {.fragment}
+
+However, that seems like a really bad idea, please don't do that!
+
+:::
+
+::: aside
+This does not make sense anymore, as the index is now used
+:::
+
+## Another idea: conditional indexes
+
+::: {.fragment}
+
+```sql
+CREATE UNIQUE INDEX review_pk_alexandria_idx ON books_review USING btree (id) where library_id = 7;
+```
+
+:::
+
+::: {.fragment}
+
+This can be a good idea if the the condition is often used. However, the [PostgreSQL doc explicitely says](https://www.postgresql.org/docs/current/indexes-partial.html#INDEXES-PARTIAL-EX4):
+
+> You might be tempted to create a large set of non-overlapping partial indexes (e.g, in our case, with every `library_id`).
+>
+> This is a bad idea! Almost certainly, you'll be better off with a single non-partial index (declared like our `review_library_id_pk_idx`)
+
+:::
+
+::: {.fragment}
+
+```{python}
+with use_indexes("review_pk_alexandria_idx"):
+    explain_qs(alexandria_id, "-id")
+```
+
+:::
+
+## Back to our benchmark
+
+:::: {.columns}
+::: {.column width="50%"}
+
+```{python}
+#| echo: false
+
+from books.tests.benchmarks import benchmark_list_reviews
+
+with use_indexes(
+    "review_written_at_idx",
+    "review_library_id_rating_idx",
+    "review_library_id_pk_idx",
+    "review_pk_alexandria_idx",
+):
+    benchmark_list_reviews(
+        ["ordered-list-reviews"], library_ids=[public_id]
+    )
+```
+
+:::
+::: {.column width="50%"}
+
+```{python}
+#| echo: false
+from books.tests.benchmarks import benchmark_list_reviews
+
+with use_indexes(
+    "review_written_at_idx",
+    "review_library_id_rating_idx",
+    "review_library_id_pk_idx",
+    "review_pk_alexandria_idx",
+):
+    benchmark_list_reviews(
+        ["ordered-list-reviews"], library_ids=[alexandria_id]
+    )
+```
+
+:::
+::::
+
+---
+
+## Adding Filters {.scrollable}
+
+:::: {.columns}
+::: {.column width="50%"}
+
+```{python}
+#| echo: false
+from books.tests.benchmarks import benchmark_list_reviews
+
+with use_indexes(
+    "review_written_at_idx",
+    "review_library_id_rating_idx",
+    "review_library_id_pk_idx",
+    # "review_library_id_pk_rating_written_at_idx",
+):
+    benchmark_list_reviews(["complete-list-reviews"], library_ids=[public_id])
+```
+
+:::
+::: {.column width="50%"}
+
+```{python}
+#| echo: false
+from books.tests.benchmarks import benchmark_list_reviews
+
+with use_indexes(
+    "review_written_at_idx",
+    "review_library_id_rating_idx",
+    "review_library_id_pk_idx",
+    # "review_library_id_pk_rating_written_at_idx",
+):
+    benchmark_list_reviews(["complete-list-reviews"], library_ids=[alexandria_id])
+```
+
+:::
+::::
+
+## Yet another index {.scrollable}
+
+Once again this changed at some point.
+
+<br>
+
+<br>
+
+:::: {.columns}
+::: {.column width="60%"}
+![](../images/previous_filters_perf.png)
+
+<!-- ```{python}
+#| echo: false
+from books.tests.benchmarks import benchmark_list_reviews
+
+with use_indexes(
+    "review_written_at_idx",
+    "review_library_id_rating_idx",
+    "review_library_id_pk_idx",
+    "review_library_id_pk_rating_written_at_idx",
+):
+    benchmark_list_reviews(["complete-list-reviews"], library_ids=[alexandria_id])
+``` -->
+
+:::
+::: {.column width="40%"}
+
+By adding yet another multicolumn index, on `(library_id, id, rating, written_at)`
+
+we managed to improve performance on all combinations,
+
+except for the problematic `id` ordering.
+:::
+::::
+
+# Back to Readers per book
+
+Let's try to add an index to try and improve perf for Alexandria, on the previous endpoint
+
+```{python}
+#| echo: false
+from django.contrib.postgres.aggregates import ArrayAgg
+from utils.sql import use_indexes
+
+def list_readers_per_book(library_id):
+    return dict(
+        Book.objects.filter(library=library_id)
+        .annotate(reader_names=ArrayAgg("readers__name"))
+        .values_list("title", "reader_names")
+    )
+
+alexandria_id = 6
+```
+
+```{python}
+
+with perf_counter(time_sql=True):
+    readers_per_book = list_readers_per_book(alexandria_id)
+
+with use_indexes("review_book_reader_idx"), perf_counter(time_sql=True):
+    readers_per_book = list_readers_per_book(alexandria_id)
+```
+
+## Final thoughts
+
+```{python}
+#| echo: false
+query = """
+SELECT
+    pg_tables.tablename,
+    pg_size_pretty(pg_relation_size('public'::text || '.' || quote_ident(pg_tables.tablename)::text)) AS table_size,
+    pg_class.reltuples AS num_rows,
+    indexname,
+    pg_size_pretty(pg_relation_size('public'::text || '.' || quote_ident(indexrelname)::text)) AS index_size
+FROM
+    pg_tables
+    LEFT OUTER JOIN pg_class ON pg_tables.tablename = pg_class.relname
+    LEFT OUTER JOIN (
+        SELECT
+            pg_class.relname AS ctablename,
+            ipg.relname AS indexname,
+            indexrelname
+        FROM
+            pg_index
+            JOIN pg_class  ON pg_class.oid = pg_index.indrelid
+            JOIN pg_class ipg ON ipg.oid = pg_index.indexrelid
+            JOIN pg_indexes ON ipg.relname = pg_indexes.indexname
+            JOIN pg_stat_all_indexes psai ON pg_index.indexrelid = psai.indexrelid) AS foo ON pg_tables.tablename = foo.ctablename
+WHERE
+    pg_tables.schemaname = 'public'
+    AND tablename ilike 'books_%'
+ORDER BY
+    pg_relation_size('public'::text || '.' || quote_ident(pg_tables.tablename)::text) desc,
+    pg_relation_size('public'::text || '.' || quote_ident(indexrelname)::text) desc;
+
+"""
+with connection.cursor() as cursor:
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+
+table = Table()
+table.add_column("Table",style="gold1")
+table.add_column("Table size", style="bold green")
+table.add_column("Rows count", style="cyan")
+table.add_column("Index",style="dark_orange3")
+table.add_column("Index size", style="bold green")
+for row in map(list, rows):
+    row[2] = f"{int(row[2]):,}"
+    table.add_row(*map(str, row[:5]))
+
+console.print(table)
+```
+
+::: {.incremental}
+
+- The more filters we allow, the more performance issues can arise
+- It's not always easy to predict which index will be used
+- Indexes are not _always_ the solution, and can take a huge ammount of space
+- You need to test on a database as close as possible to your live, production database
+
+:::

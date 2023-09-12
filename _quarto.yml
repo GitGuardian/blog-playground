@@ -1,0 +1,22 @@
+project:
+  title: "django-perfs-playground"
+  render:
+    - "*.qmd"
+  output-dir: djangocon_workshop/quarto_files/
+  execute-dir: project
+execute:
+  echo: true
+  cache: true
+
+highlight-style: github
+format:
+  revealjs:
+    transition: slide
+    background-transition: fade
+    navigation-mode: linear
+    theme: dark
+    width: 1536
+    height: 1120
+
+# smaller: true
+css: djangocon_workshop/quarto_style.css
